@@ -44,7 +44,7 @@ Placera en fallback-video här (spelas upp om kameran inte är tillgänglig):
 sudo chmod +x /opt/webcam-2.0/webcam-supervisor.py
 ```
 
-### 5. Installera som systemd-tjänst
+### 5. Installera som systemd-tjänst (om filen redan finns i repo)
 ```bash
 sudo cp systemd/webcam-2.0-yt.service /etc/systemd/system/
 sudo systemctl daemon-reload
@@ -56,6 +56,53 @@ Visa loggar i realtid:
 ```bash
 sudo journalctl -u webcam-2.0-yt -f
 ```
+
+---
+
+## Skapa systemd-tjänsten manuellt
+
+Om du inte har `systemd/webcam-2.0-yt.service` i repot, kan du skapa den själv.
+
+1. Öppna en ny fil:
+   ```bash
+   sudo nano /etc/systemd/system/webcam-2.0-yt.service
+   ```
+
+2. Klistra in detta innehåll:
+
+   ```ini
+   [Unit]
+   Description=Webcam 2.0 - RTSP to YouTube supervisor
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   Type=simple
+   WorkingDirectory=/opt/webcam-2.0
+   ExecStart=/usr/bin/python3 /opt/webcam-2.0/webcam-supervisor.py
+   Restart=always
+   RestartSec=5
+   User=root
+   # Om du vill läsa variabler från fil:
+   # EnvironmentFile=/etc/webcam-2.0.env
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+3. Ladda om systemd och starta tjänsten:
+
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable webcam-2.0-yt
+   sudo systemctl start webcam-2.0-yt
+   ```
+
+4. Kolla loggen:
+
+   ```bash
+   sudo journalctl -u webcam-2.0-yt -f
+   ```
 
 ---
 
@@ -88,7 +135,7 @@ Lägg in följande iframe i din HTML:
 
 ## Mappstruktur
 
-```
+```text
 /opt/webcam-2.0/
 ├── webcam-supervisor.py   # Python-huvudscript
 ├── fallback.mp4           # Spelas vid kameraproblem
@@ -100,7 +147,7 @@ Lägg in följande iframe i din HTML:
 
 ## Systemöversikt
 
-```
+```text
 [RTSP-kamera]
       │
       ▼
@@ -117,7 +164,7 @@ Lägg in följande iframe i din HTML:
 ## Felsökning
 
 | Problem | Orsak | Lösning |
-|----------|--------|----------|
+|---------|--------|---------|
 | YouTube visar laddningsikon | RTMPS-anslutningen tappad | Vänta, fallback startar automatiskt |
 | Ingen kamera hittas | DHCP-adress ändrad / fel MAC | Kontrollera `sudo journalctl -u webcam-2.0-yt -f` |
 | Ingen ljudström | Fejkljud (`anullsrc`) används så att YouTube alltid får ljud |
