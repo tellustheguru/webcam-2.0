@@ -44,31 +44,18 @@ Placera en fallback-video här (spelas upp om kameran inte är tillgänglig):
 sudo chmod +x /opt/webcam-2.0/webcam-supervisor.py
 ```
 
-### 5. Installera som systemd-tjänst (om filen redan finns i repo)
-```bash
-sudo cp systemd/webcam-2.0-yt.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable webcam-2.0-yt
-sudo systemctl start webcam-2.0-yt
-```
-
-Visa loggar i realtid:
-```bash
-sudo journalctl -u webcam-2.0-yt -f
-```
-
 ---
 
-## Skapa systemd-tjänsten manuellt
+## Skapa systemd-tjänst
 
-Om du inte har `systemd/webcam-2.0-yt.service` i repot, kan du skapa den själv.
+Systemd används för att köra Webcam 2.0 som en bakgrundsprocess som startar automatiskt vid uppstart och återstartar vid fel.
 
-1. Öppna en ny fil:
+1. Skapa tjänstfilen:
    ```bash
    sudo nano /etc/systemd/system/webcam-2.0-yt.service
    ```
 
-2. Klistra in detta innehåll:
+2. Klistra in följande innehåll:
 
    ```ini
    [Unit]
@@ -83,26 +70,61 @@ Om du inte har `systemd/webcam-2.0-yt.service` i repot, kan du skapa den själv.
    Restart=always
    RestartSec=5
    User=root
-   # Om du vill läsa variabler från fil:
-   # EnvironmentFile=/etc/webcam-2.0.env
+   # Aktivera watchdog för extra robusthet:
+   WatchdogSec=30
+   StartLimitIntervalSec=120
+   StartLimitBurst=5
+   TimeoutStopSec=5
 
    [Install]
    WantedBy=multi-user.target
    ```
 
-3. Ladda om systemd och starta tjänsten:
-
+3. Ladda om systemd och aktivera tjänsten:
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl enable webcam-2.0-yt
    sudo systemctl start webcam-2.0-yt
    ```
 
-4. Kolla loggen:
+4. Kontrollera att tjänsten körs:
+   ```bash
+   sudo systemctl status webcam-2.0-yt
+   ```
 
+5. Visa loggar i realtid:
    ```bash
    sudo journalctl -u webcam-2.0-yt -f
    ```
+
+---
+
+## Aktivera systemets Watchdog
+
+För ännu högre tillförlitlighet kan du låta **systemd’s egen watchdog** automatiskt starta om hela datorn om tjänsten hänger sig.
+
+1. Aktivera watchdog i `system.conf`:
+   ```bash
+   sudo nano /etc/systemd/system.conf
+   ```
+
+2. Avkommentera och ändra dessa rader:
+   ```
+   RuntimeWatchdogSec=20s
+   ShutdownWatchdogSec=10min
+   ```
+
+3. Starta om systemd:
+   ```bash
+   sudo systemctl daemon-reexec
+   ```
+
+4. Kontrollera:
+   ```bash
+   systemctl show | grep Watchdog
+   ```
+
+Systemd kommer nu automatiskt att övervaka att tjänsten svarar — om Python-processen fryser eller inte rapporterar livstecken inom 30 sekunder, startas den om. Om hela systemet låser sig, triggas en hård reboot via kernel-watchdog.
 
 ---
 
@@ -128,7 +150,7 @@ Lägg in följande iframe i din HTML:
 - RTSP till YouTube Live (RTMPS)  
 - Automatisk fallback-video vid bortkoppling  
 - Optimerad för LTE och instabila nätverk  
-- Körs som systemd-tjänst  
+- Körs som systemd-tjänst med watchdog-stöd  
 - Självläkande: återstartar automatiskt efter fel  
 
 ---
@@ -138,9 +160,7 @@ Lägg in följande iframe i din HTML:
 ```text
 /opt/webcam-2.0/
 ├── webcam-supervisor.py   # Python-huvudscript
-├── fallback.mp4           # Spelas vid kameraproblem
-└── systemd/
-    └── webcam-2.0-yt.service
+└── fallback.mp4           # Spelas vid kameraproblem
 ```
 
 ---
