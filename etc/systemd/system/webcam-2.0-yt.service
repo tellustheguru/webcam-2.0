@@ -1,0 +1,17 @@
+[Unit]
+Description=Webcam 2.0 - RTSP to YouTube supervisor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/webcam-2.0
+ExecStart=/usr/bin/python3 /opt/webcam-2.0/webcam-supervisor.py
+Restart=always
+RestartSec=5
+User=root
+# Uncomment if you want env file:
+# EnvironmentFile=/etc/webcam-2.0.env
+
+[Install]
+WantedBy=multi-user.target
