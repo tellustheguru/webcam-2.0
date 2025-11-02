@@ -19,7 +19,7 @@ sudo apt install -y ffmpeg python3 python3-venv git
 ### 2. Klona projektet
 ```bash
 cd /opt
-sudo git clone https://github.com/<DITT-GITHUB-ANVÄNDARNAMN>/webcam-2.0.git
+sudo git clone https://github.com/tellustheguru/webcam-2.0.git
 cd webcam-2.0
 ```
 
