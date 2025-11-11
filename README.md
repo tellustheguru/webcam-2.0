@@ -13,7 +13,7 @@ Projektet fungerar med alla RTSP-kompatibla IP-kameror, inklusive TP-Link Tapo, 
 ### 1. Installera beroenden
 ```bash
 sudo apt update
-sudo apt install -y ffmpeg python3 python3-venv git
+sudo apt install -y ffmpeg python3 python3-venv yt-dlp git
 ```
 
 ### 2. Klona projektet
@@ -31,6 +31,7 @@ RTSP_USER  = "kamerans-användare"
 RTSP_PASS  = "kamerans-lösenord"
 YT_KEY     = "din-youtube-streamnyckel"
 TARGET_MAC = "xx:xx:xx:xx:xx:xx"   # kamerans MAC-adress
+YT_CHANNEL_ID = "Din YouTube-kanal-ID"
 ```
 
 Placera en fallback-video här (spelas upp om kameran inte är tillgänglig):
