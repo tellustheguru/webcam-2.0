@@ -3,10 +3,10 @@ import json, os, shlex, signal, socket, subprocess, time, select
 from ipaddress import ip_network, ip_address
 
 # ========= KONFIG =========
-RTSP_USER = "[Ditt användarnamn]"
-RTSP_PASS = "[Ditt lösenord]"
+RTSP_USER = "webcam20"
+RTSP_PASS = "q5Svx32Tc"
 
-YT_KEY     = "[Din YouTube-nyckel]"
+YT_KEY     = "jkzv-gjcf-y04z-7zs0-66xv"
 YT_PRIMARY = f"rtmps://a.rtmp.youtube.com/live2/{YT_KEY}"
 YT_BACKUP  = f"rtmps://b.rtmp.youtube.com/live2?backup=1/{YT_KEY}"
 
@@ -28,30 +28,37 @@ USE_BACKUP = False
 
 # HLS-healthcheck (YouTube)
 ENABLE_YT_HEALTHCHECK = True
-YT_CHANNEL_ID         = "[Din YouTube-kanal-ID]"
+YT_CHANNEL_ID         = "UCJg2xn8Uhe12GZQabOHg-6w"
 YT_HEALTHCHECK_EVERY  = 120
 YT_STALL_GRACE        = 3
 YT_POST_RESTART_COOLDOWN = 240  # lite längre cooldown så vi inte loopsnurrar
 
 # Snabb MAC-upptäckt
-TARGET_MAC = "[Din Kameras MAC-adress]".lower()
+TARGET_MAC = "98:ba:5f:1d:ae:91".lower()
 
 # Fallback-CIDR
-STATIC_CIDR = "[Din fallback-CIDR, t.ex. 192.168.0.0/24]"
+STATIC_CIDR = "192.168.0.0/24"
 
 # Mönster för RTMPS-/tee-fel
-FFMPEG_OUT_ERROR_PATTERNS = (
-    "Slave muxer #0 failed",
-    "Slave muxer #1 failed",
-    "All tee outputs failed",
+FFMPEG_RECOVERABLE_PATTERNS = (
+    "Error in the push function",
     "Broken pipe",
     "IO error: End of file",
     "The specified session has been invalidated",
 )
 
+FFMPEG_FATAL_PATTERNS = (
+    "Slave muxer #0 failed",
+    "Slave muxer #1 failed",
+    "All tee outputs failed",
+)
+
+RECOVERABLE_RESTART_LIMIT = 4
+RECOVERABLE_RESTART_WINDOW = 600
+
 # ========= HJÄLPARE =========
 def log(msg):
-    print(f"[webcam-2.0] {msg}", flush=True)
+    print(f"[gordalen] {msg}", flush=True)
 
 def run(cmd):
     return subprocess.run(cmd, shell=True, stdout=subprocess.PIPE,
@@ -68,12 +75,17 @@ def popen(cmd, inherit=False):
 
 def kill_tree(p):
     if p and p.poll() is None:
-        try: os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-        except: pass
-        try: p.wait(timeout=2)
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
         except:
-            try: os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-            except: pass
+            pass
+        try:
+            p.wait(timeout=2)
+        except:
+            try:
+                os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            except:
+                pass
 
 def ffprobe_has_video(rtsp_url):
     cmd = (
@@ -107,7 +119,8 @@ def default_cidr():
     try:
         js = json.loads(r.stdout)
         for it in js:
-            if it.get("ifname") == "lo": continue
+            if it.get("ifname") == "lo":
+                continue
             for a in it.get("addr_info", []):
                 if a.get("family") == "inet":
                     return f"{a['local']}/{a['prefixlen']}"
@@ -124,16 +137,23 @@ def normalize_net(cidr_str):
 def tcp_port_open(ip, port=554, timeout=0.5):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(timeout)
-        try: s.connect((str(ip), port)); return True
-        except Exception: return False
+        try:
+            s.connect((str(ip), port))
+            return True
+        except Exception:
+            return False
 
 def arp_table():
-    r = run("ip -json neigh"); out = {}
+    r = run("ip -json neigh")
+    out = {}
     try:
         for row in json.loads(r.stdout or "[]"):
-            ip = row.get("dst"); mac = (row.get("lladdr") or "").lower()
-            if ip and mac: out[ip] = mac
-    except Exception: pass
+            ip = row.get("dst")
+            mac = (row.get("lladdr") or "").lower()
+            if ip and mac:
+                out[ip] = mac
+    except Exception:
+        pass
     return out
 
 def ping_sweep(net):
@@ -142,13 +162,17 @@ def ping_sweep(net):
     time.sleep(2)
 
 def find_ip_by_mac(target_mac, net):
-    if not target_mac: return None
-    ping_sweep(net); table = arp_table()
+    if not target_mac:
+        return None
+    ping_sweep(net)
+    table = arp_table()
     for ip, mac in table.items():
         if mac.lower() == target_mac:
             try:
-                if ip_address(ip) in net: return ip
-            except ValueError: pass
+                if ip_address(ip) in net:
+                    return ip
+            except ValueError:
+                pass
     return None
 
 def make_rtsp_urls(ip):
@@ -169,7 +193,8 @@ def find_camera_by_mac(target_mac):
                 log(f"hittade kamera (MAC match): {ip} via {url}")
                 return True, url
 
-    ping_sweep(net); table = arp_table()
+    ping_sweep(net)
+    table = arp_table()
     arp_ips = [i for i in table.keys() if ip_address(i) in net]
     if arp_ips:
         log(f"provar ARP-IP:er först: {arp_ips[:8]}{' …' if len(arp_ips)>8 else ''}")
@@ -183,8 +208,10 @@ def find_camera_by_mac(target_mac):
     candidates = []
     for host in net.hosts():
         sip = str(host)
-        if sip in arp_ips: continue
-        if tcp_port_open(sip, 554): candidates.append(sip)
+        if sip in arp_ips:
+            continue
+        if tcp_port_open(sip, 554):
+            candidates.append(sip)
 
     if candidates:
         log(f"kandidater via port 554: {candidates[:8]}{' …' if len(candidates)>8 else ''}")
@@ -276,10 +303,13 @@ def ffmpeg_output_has_error(proc):
         if line:
             line = line.strip()
             log(line)
-            for pat in FFMPEG_OUT_ERROR_PATTERNS:
+            for pat in FFMPEG_RECOVERABLE_PATTERNS:
                 if pat in line:
-                    return True
-    return False
+                    return "recoverable"
+            for pat in FFMPEG_FATAL_PATTERNS:
+                if pat in line:
+                    return "fatal"
+    return None
 
 # ----- YouTube HLS healthcheck (playlist-förändring) -----
 _cached_hls = None
@@ -326,26 +356,68 @@ def main():
     last_yt_check = 0
     yt_stall_count = 0
     last_restart_time = 0
+    recoverable_restart_times = []
 
     while True:
         try:
-            # gemensamt: om ffmpeg rapporterar RTMPS-fel => fallback
-            if ffmpeg_output_has_error(ff):
+            err_kind = ffmpeg_output_has_error(ff)
+            if err_kind:
+                if (mode == "camera" and current_rtsp and
+                        err_kind == "recoverable"):
+                    now = time.time()
+                    recoverable_restart_times = [
+                        t for t in recoverable_restart_times
+                        if now - t < RECOVERABLE_RESTART_WINDOW
+                    ]
+                    if len(recoverable_restart_times) >= RECOVERABLE_RESTART_LIMIT:
+                        log("för många RTMP/TLS-fel nyligen -> OMEDELBAR FALLBACK")
+                    else:
+                        log("ffmpeg tappade RTMP-utgången, försöker kamera-restart utan fallback")
+                        recoverable_restart_times.append(now)
+                        kill_tree(ff)
+                        ff = start_camera_stream(current_rtsp)
+                        last_restart_time = now
+                        yt_stall_count = 0
+                        _cached_hls = None
+                        _last_seg = None
+                        time.sleep(PING_INTERVAL)
+                        continue
+
                 log("ffmpeg rapporterade RTMP/tee-fel -> OMEDELBAR FALLBACK")
                 kill_tree(ff)
                 ff = start_fallback_stream()
                 mode = "fallback"
+                current_rtsp = None
+                yt_stall_count = 0
+                last_restart_time = time.time()
+                recoverable_restart_times = []
                 _cached_hls = None
+                _last_seg = None
                 time.sleep(SCAN_INTERVAL)
                 continue
 
             if mode == "camera":
                 if ff.poll() is not None:
-                    log("kameraprocess dog -> OMEDELBAR FALLBACK")
+                    log("kameraprocess dog")
                     kill_tree(ff)
+                    if current_rtsp and ffprobe_has_video(current_rtsp):
+                        log("kameran svarar, försöker kamera-restart utan fallback")
+                        ff = start_camera_stream(current_rtsp)
+                        last_restart_time = time.time()
+                        yt_stall_count = 0
+                        _cached_hls = None
+                        _last_seg = None
+                        time.sleep(PING_INTERVAL)
+                        continue
+
+                    log("kameraprocess dog -> OMEDELBAR FALLBACK")
                     ff = start_fallback_stream()
                     mode = "fallback"
+                    current_rtsp = None
+                    yt_stall_count = 0
+                    recoverable_restart_times = []
                     _cached_hls = None
+                    _last_seg = None
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -354,7 +426,10 @@ def main():
                     kill_tree(ff)
                     ff = start_fallback_stream()
                     mode = "fallback"
+                    current_rtsp = None
                     _cached_hls = None
+                    _last_seg = None
+                    recoverable_restart_times = []
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -381,6 +456,7 @@ def main():
                                     current_rtsp = None
                                     yt_stall_count = 0
                                     last_restart_time = time.time()
+                                    recoverable_restart_times = []
                                     _cached_hls = None
                                     _last_seg = None
                                     time.sleep(30)  # liten “cooldown” så YT hinner rensa buffert/ghost
