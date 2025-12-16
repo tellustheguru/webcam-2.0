@@ -3,10 +3,10 @@ import json, os, shlex, signal, socket, subprocess, time, select
 from ipaddress import ip_network, ip_address
 
 # ========= KONFIG =========
-RTSP_USER = "webcam20"
-RTSP_PASS = "q5Svx32Tc"
+RTSP_USER = "<ANVÄNDARE>"
+RTSP_PASS = "<LÖSENORD>"
 
-YT_KEY     = "jkzv-gjcf-y04z-7zs0-66xv"
+YT_KEY     = "<YOUTUBE-STREAM-KEY>"
 YT_PRIMARY = f"rtmps://a.rtmp.youtube.com/live2/{YT_KEY}"
 YT_BACKUP  = f"rtmps://b.rtmp.youtube.com/live2?backup=1/{YT_KEY}"
 
@@ -28,13 +28,29 @@ USE_BACKUP = False
 
 # HLS-healthcheck (YouTube)
 ENABLE_YT_HEALTHCHECK = True
-YT_CHANNEL_ID         = "UCJg2xn8Uhe12GZQabOHg-6w"
+YT_CHANNEL_ID         = "<YOUTUBE-CHANNEL-ID>"
 YT_HEALTHCHECK_EVERY  = 120
 YT_STALL_GRACE        = 3
 YT_POST_RESTART_COOLDOWN = 240  # lite längre cooldown så vi inte loopsnurrar
+YT_STALL_CAMERA_RECOVERIES = 2  # snabba kamera-restarts innan vi går till fallback
+YT_FALLBACK_MIN_SECONDS    = 120  # håll fallback ett tag så YouTube hinner vakna
+YT_RECOVERY_CHECK_INTERVAL = 15   # hur ofta vi kollar HLS under fallback innan kamera
+
+# Label-overlay
+LABEL_TEXT = "<VALFRI-TEXT>"
+LABEL_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+LABEL_FONT_SIZE = 30
+LABEL_TEXT_COLOR = "0x0F2C5C" # Valfri hex-färg
+LABEL_OFFSET = 5
+LABEL_PADDING = 4
+LABEL_BG_ALPHA = 0.6
+
+# Kamera-restart vid upprepade ffmpeg-dödsfall
+CAMERA_DEATH_RESTART_LIMIT = 4
+CAMERA_DEATH_RESTART_WINDOW = 90
 
 # Snabb MAC-upptäckt
-TARGET_MAC = "98:ba:5f:1d:ae:91".lower()
+TARGET_MAC = "<MAC-ADDRESS>".lower()
 
 # Fallback-CIDR
 STATIC_CIDR = "192.168.0.0/24"
@@ -231,11 +247,51 @@ def out_mux():
                 f'[f=flv:flvflags=no_duration_filesize:onfail=ignore]{YT_BACKUP}"')
     return f'-f flv "{YT_PRIMARY}"'
 
-def cmd_from_rtsp(rtsp):
-    vf = (
-        f'scale=1280:720:force_original_aspect_ratio=decrease:in_range=full:out_range=tv,'
-        f'pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps={FPS},setsar=1,format=yuv420p'
+
+def _rounded_alpha_expr(width, height, radius):
+    right = width - radius - 1
+    bottom = height - radius - 1
+    return (
+        f"if(between(X,{radius},{width - radius - 1})*between(Y,{radius},{height - radius - 1}),255,"
+        f"if(lte(hypot(X-{radius},Y-{radius}),{radius}),255,"
+        f"if(lte(hypot(X-{right},Y-{radius}),{radius}),255,"
+        f"if(lte(hypot(X-{radius},Y-{bottom}),{radius}),255,"
+        f"if(lte(hypot(X-{right},Y-{bottom}),{radius}),255,0)))))"
     )
+
+
+def _ffmpeg_escape(text):
+    return (text
+            .replace("\\", r"\\\\")
+            .replace(":", r"\:")
+            .replace("'", r"\'")
+            .replace("[", r"\[")
+            .replace("]", r"\]")
+            )
+
+
+def build_filter_graph(base_chain, include_label=True):
+    text = _ffmpeg_escape(LABEL_TEXT)
+    fontfile = LABEL_FONT.replace(':', r'\:')
+    text_x = LABEL_OFFSET + LABEL_PADDING
+    text_y = f"{LABEL_OFFSET + LABEL_PADDING}+text_h"
+    if include_label:
+        return (
+            f"[0:v]{base_chain},format=rgba,"
+            f"drawtext=fontfile='{fontfile}':text='{text}':"
+            f"fontsize={LABEL_FONT_SIZE}:fontcolor={LABEL_TEXT_COLOR}:"
+            f"x={text_x}:y={text_y}:"
+            f"box=1:boxcolor=white@{LABEL_BG_ALPHA}:boxborderw={LABEL_PADDING * 2},"
+            f"format=yuv420p[vout]"
+        )
+    return f"[0:v]{base_chain},format=yuv420p[vout]"
+
+def cmd_from_rtsp(rtsp):
+    base_chain = (
+        f'scale=1280:720:force_original_aspect_ratio=decrease:in_range=full:out_range=tv,'
+        f'pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps={FPS},setsar=1'
+    )
+    filter_graph = build_filter_graph(base_chain, include_label=True)
     return (
         'ffmpeg '
         '-hide_banner -loglevel error -strict -1 '
@@ -246,7 +302,7 @@ def cmd_from_rtsp(rtsp):
         '-rtbufsize 512M '
         f'-i "{rtsp}" '
         '-f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 '
-        f'-filter:v "{vf}" '
+        f'-filter_complex "{filter_graph}" '
         f'-fps_mode cfr -r {FPS} '
         '-c:v libx264 -preset veryfast -profile:v high -tune zerolatency '
         f'-x264-params keyint={GOP}:min-keyint={GOP}:scenecut=0 '
@@ -254,23 +310,24 @@ def cmd_from_rtsp(rtsp):
         f'-b:v {VBPS} -maxrate {MAXRATE} -bufsize {BUFSIZE} '
         '-c:a aac -b:a 128k -ar 44100 -ac 2 '
         '-colorspace bt709 -color_primaries bt709 -color_trc bt709 '
-        '-map 0:v:0 -map 1:a:0 '
+        '-map "[vout]" -map 1:a:0 '
         '-flush_packets 1 -muxpreload 0 -muxdelay 0 '
         '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 '
         + out_mux()
     )
 
 def cmd_from_fallback():
-    vf = (
+    base_chain = (
         f'scale=1280:720:force_original_aspect_ratio=increase:in_range=full:out_range=tv,'
-        f'crop=1280:720,fps={FPS},setsar=1,format=yuv420p'
+        f'crop=1280:720,fps={FPS},setsar=1'
     )
+    filter_graph = build_filter_graph(base_chain, include_label=False)
     return (
         'ffmpeg '
         '-hide_banner -loglevel error -strict -1 '
         f'-stream_loop -1 -re -i "{FALLBACK_MP4}" '
         '-f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 '
-        f'-filter:v "{vf}" '
+        f'-filter_complex "{filter_graph}" '
         f'-fps_mode cfr -r {FPS} '
         f'-c:v libx264 -preset veryfast -profile:v high -tune zerolatency '
         f'-x264-params keyint={GOP}:min-keyint={GOP}:scenecut=0 '
@@ -278,7 +335,7 @@ def cmd_from_fallback():
         f'-b:v {VBPS} -maxrate {MAXRATE} -bufsize {BUFSIZE} '
         '-c:a aac -b:a 128k -ar 44100 -ac 2 '
         '-colorspace bt709 -color_primaries bt709 -color_trc bt709 '
-        '-map 0:v:0 -map 1:a:0 '
+        '-map "[vout]" -map 1:a:0 '
         '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 '
         + out_mux()
     )
@@ -357,6 +414,37 @@ def main():
     yt_stall_count = 0
     last_restart_time = 0
     recoverable_restart_times = []
+    yt_stall_camera_restarts = 0
+    fallback_hold_until = 0
+    awaiting_yt_recovery = False
+    last_recovery_check = 0
+    camera_death_restart_times = []
+
+    def go_to_fallback(require_recovery):
+        nonlocal ff, mode, current_rtsp, yt_stall_count, last_restart_time
+        nonlocal recoverable_restart_times, fallback_hold_until
+        nonlocal awaiting_yt_recovery, last_recovery_check
+        nonlocal yt_stall_camera_restarts, camera_death_restart_times
+        global _cached_hls, _last_seg
+
+        kill_tree(ff)
+        ff = start_fallback_stream()
+        mode = "fallback"
+        current_rtsp = None
+        yt_stall_count = 0
+        yt_stall_camera_restarts = 0
+        camera_death_restart_times = []
+        recoverable_restart_times = []
+        last_restart_time = time.time()
+        _cached_hls = None
+        _last_seg = None
+        if require_recovery:
+            awaiting_yt_recovery = True
+            fallback_hold_until = last_restart_time + YT_FALLBACK_MIN_SECONDS
+        else:
+            awaiting_yt_recovery = False
+            fallback_hold_until = 0
+        last_recovery_check = 0
 
     while True:
         try:
@@ -384,15 +472,7 @@ def main():
                         continue
 
                 log("ffmpeg rapporterade RTMP/tee-fel -> OMEDELBAR FALLBACK")
-                kill_tree(ff)
-                ff = start_fallback_stream()
-                mode = "fallback"
-                current_rtsp = None
-                yt_stall_count = 0
-                last_restart_time = time.time()
-                recoverable_restart_times = []
-                _cached_hls = None
-                _last_seg = None
+                go_to_fallback(require_recovery=True)
                 time.sleep(SCAN_INTERVAL)
                 continue
 
@@ -400,36 +480,37 @@ def main():
                 if ff.poll() is not None:
                     log("kameraprocess dog")
                     kill_tree(ff)
+                    now = time.time()
+                    camera_death_restart_times = [
+                        t for t in camera_death_restart_times
+                        if now - t < CAMERA_DEATH_RESTART_WINDOW
+                    ]
                     if current_rtsp and ffprobe_has_video(current_rtsp):
+                        if len(camera_death_restart_times) >= CAMERA_DEATH_RESTART_LIMIT:
+                            log("kameraprocess dog upprepade gånger -> OMEDELBAR FALLBACK")
+                            go_to_fallback(require_recovery=True)
+                            time.sleep(SCAN_INTERVAL)
+                            continue
+
+                        camera_death_restart_times.append(now)
                         log("kameran svarar, försöker kamera-restart utan fallback")
                         ff = start_camera_stream(current_rtsp)
                         last_restart_time = time.time()
                         yt_stall_count = 0
+                        yt_stall_camera_restarts = 0
                         _cached_hls = None
                         _last_seg = None
                         time.sleep(PING_INTERVAL)
                         continue
 
                     log("kameraprocess dog -> OMEDELBAR FALLBACK")
-                    ff = start_fallback_stream()
-                    mode = "fallback"
-                    current_rtsp = None
-                    yt_stall_count = 0
-                    recoverable_restart_times = []
-                    _cached_hls = None
-                    _last_seg = None
+                    go_to_fallback(require_recovery=True)
                     time.sleep(SCAN_INTERVAL)
                     continue
 
                 if not ffprobe_has_video(current_rtsp):
                     log("kamera-probe misslyckades -> OMEDELBAR FALLBACK")
-                    kill_tree(ff)
-                    ff = start_fallback_stream()
-                    mode = "fallback"
-                    current_rtsp = None
-                    _cached_hls = None
-                    _last_seg = None
-                    recoverable_restart_times = []
+                    go_to_fallback(require_recovery=False)
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -443,22 +524,28 @@ def main():
                             if seg and seg != _last_seg:
                                 _last_seg = seg
                                 yt_stall_count = 0
+                                yt_stall_camera_restarts = 0
                                 log("YouTube HLS rör sig (ok)")
                             else:
                                 yt_stall_count += 1
                                 log(f"YouTube HLS verkar stannat (#{yt_stall_count})")
                                 if yt_stall_count >= YT_STALL_GRACE:
+                                    if yt_stall_camera_restarts < YT_STALL_CAMERA_RECOVERIES:
+                                        attempt = yt_stall_camera_restarts + 1
+                                        log(f"HLS stannat flera gånger → kamera-restart {attempt}/{YT_STALL_CAMERA_RECOVERIES}")
+                                        yt_stall_camera_restarts = attempt
+                                        kill_tree(ff)
+                                        ff = start_camera_stream(current_rtsp)
+                                        last_restart_time = time.time()
+                                        yt_stall_count = 0
+                                        _cached_hls = None
+                                        _last_seg = None
+                                        time.sleep(PING_INTERVAL)
+                                        continue
+
                                     log("HLS stannat flera gånger → kort fallback, låt skannern hitta kameran")
-                                    kill_tree(ff)
-                                    ff = start_fallback_stream()
-                                    mode = "fallback"
                                     # Låt fallback-loopens MAC-skanning ta över, det är robustare
-                                    current_rtsp = None
-                                    yt_stall_count = 0
-                                    last_restart_time = time.time()
-                                    recoverable_restart_times = []
-                                    _cached_hls = None
-                                    _last_seg = None
+                                    go_to_fallback(require_recovery=True)
                                     time.sleep(30)  # liten “cooldown” så YT hinner rensa buffert/ghost
                                     continue
                         except Exception as e:
@@ -467,6 +554,37 @@ def main():
                 time.sleep(PING_INTERVAL)
 
             else:
+                if awaiting_yt_recovery:
+                    now = time.time()
+                    if now < fallback_hold_until:
+                        time.sleep(SCAN_INTERVAL)
+                        continue
+                    if ENABLE_YT_HEALTHCHECK:
+                        if now - last_recovery_check < YT_RECOVERY_CHECK_INTERVAL:
+                            time.sleep(SCAN_INTERVAL)
+                            continue
+                        last_recovery_check = now
+                        try:
+                            hls = get_youtube_live_hls(YT_CHANNEL_ID)
+                            seg = hls_last_segment_id(hls)
+                            prev_seg = _last_seg
+                            if seg and prev_seg and seg != prev_seg:
+                                awaiting_yt_recovery = False
+                                _last_seg = seg
+                                log("YouTube HLS rör sig igen efter fallback")
+                            else:
+                                if seg and not prev_seg:
+                                    _last_seg = seg
+                                log("väntar på att YouTube HLS ska röra sig igen innan kamerabyte")
+                                time.sleep(SCAN_INTERVAL)
+                                continue
+                        except Exception as e:
+                            log(f"YT-recovery check exception: {e}")
+                            time.sleep(SCAN_INTERVAL)
+                            continue
+                    else:
+                        awaiting_yt_recovery = False
+
                 found, url = find_camera_by_mac(TARGET_MAC)
                 if found and url:
                     log("kamera uppe -> byter till RTSP")
@@ -476,6 +594,11 @@ def main():
                     mode = "camera"
                     _cached_hls = None
                     _last_seg = None
+                    yt_stall_camera_restarts = 0
+                    awaiting_yt_recovery = False
+                    fallback_hold_until = 0
+                    last_recovery_check = 0
+                    camera_death_restart_times = []
                     last_restart_time = time.time()
                     time.sleep(PING_INTERVAL)
                     continue
