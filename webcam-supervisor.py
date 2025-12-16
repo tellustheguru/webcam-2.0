@@ -3,10 +3,17 @@ import json, os, shlex, signal, socket, subprocess, time, select
 from ipaddress import ip_network, ip_address
 
 # ========= KONFIG =========
+<<<<<<< 2026-12-16
 RTSP_USER = "<ANVÄNDARE>"
 RTSP_PASS = "<LÖSENORD>"
 
 YT_KEY     = "<YOUTUBE-STREAM-KEY>"
+=======
+RTSP_USER = "anv.namn"
+RTSP_PASS = "lösen"
+
+YT_KEY     = "youtubenyckel"
+>>>>>>> main
 YT_PRIMARY = f"rtmps://a.rtmp.youtube.com/live2/{YT_KEY}"
 YT_BACKUP  = f"rtmps://b.rtmp.youtube.com/live2?backup=1/{YT_KEY}"
 
@@ -28,7 +35,11 @@ USE_BACKUP = False
 
 # HLS-healthcheck (YouTube)
 ENABLE_YT_HEALTHCHECK = True
+<<<<<<< 2026-12-16
 YT_CHANNEL_ID         = "<YOUTUBE-CHANNEL-ID>"
+=======
+YT_CHANNEL_ID         = "kanalid"
+>>>>>>> main
 YT_HEALTHCHECK_EVERY  = 120
 YT_STALL_GRACE        = 3
 YT_POST_RESTART_COOLDOWN = 240  # lite längre cooldown så vi inte loopsnurrar
@@ -50,7 +61,11 @@ CAMERA_DEATH_RESTART_LIMIT = 4
 CAMERA_DEATH_RESTART_WINDOW = 90
 
 # Snabb MAC-upptäckt
+<<<<<<< 2026-12-16
 TARGET_MAC = "<MAC-ADDRESS>".lower()
+=======
+TARGET_MAC = "macadress".lower()
+>>>>>>> main
 
 # Fallback-CIDR
 STATIC_CIDR = "192.168.0.0/24"
