@@ -56,6 +56,12 @@ LABEL_OFFSET = 5
 LABEL_PADDING = 4
 LABEL_BG_ALPHA = 0.6
 
+# Watermark (kamera-läget)
+WATERMARK_ENABLED = True
+WATERMARK_PATH = "/opt/webcam-2.0/gordalen_nu_logo.png"
+WATERMARK_MAX_SIZE = 300   # max-bredd/höjd i px
+WATERMARK_MARGIN = 14      # px från höger/underkant
+
 # Kamera-restart vid upprepade ffmpeg-dödsfall
 CAMERA_DEATH_RESTART_LIMIT = 4
 CAMERA_DEATH_RESTART_WINDOW = 90
@@ -285,28 +291,59 @@ def _ffmpeg_escape(text):
             )
 
 
-def build_filter_graph(base_chain, include_label=True):
+def build_filter_graph(base_chain, include_label=True, include_watermark=False, wm_input_index=1):
     text = _ffmpeg_escape(LABEL_TEXT)
     fontfile = LABEL_FONT.replace(':', r'\:')
     text_x = LABEL_OFFSET + LABEL_PADDING
     text_y = f"{LABEL_OFFSET + LABEL_PADDING}+text_h"
+    parts = [f"[0:v]{base_chain},format=rgba[base]"]
+    current = "base"
+
+    if include_watermark:
+        parts.append(
+            f"[{wm_input_index}:v]scale=w='min(iw,{WATERMARK_MAX_SIZE})':"
+            f"h='min(ih,{WATERMARK_MAX_SIZE})':force_original_aspect_ratio=decrease,"
+            f"format=rgba[wm]"
+        )
+        parts.append(
+            f"[{current}][wm]overlay=W-w-{WATERMARK_MARGIN}:"
+            f"H-h-{WATERMARK_MARGIN}[withwm]"
+        )
+        current = "withwm"
+
     if include_label:
-        return (
-            f"[0:v]{base_chain},format=rgba,"
-            f"drawtext=fontfile='{fontfile}':text='{text}':"
+        parts.append(
+            f"[{current}]drawtext=fontfile='{fontfile}':text='{text}':"
             f"fontsize={LABEL_FONT_SIZE}:fontcolor={LABEL_TEXT_COLOR}:"
             f"x={text_x}:y={text_y}:"
-            f"box=1:boxcolor=white@{LABEL_BG_ALPHA}:boxborderw={LABEL_PADDING * 2},"
-            f"format=yuv420p[vout]"
+            f"box=1:boxcolor=white@{LABEL_BG_ALPHA}:boxborderw={LABEL_PADDING * 2}" \
+            f"[withtext]"
         )
-    return f"[0:v]{base_chain},format=yuv420p[vout]"
+        current = "withtext"
+
+    parts.append(f"[{current}]format=yuv420p[vout]")
+    return ";".join(parts)
 
 def cmd_from_rtsp(rtsp):
     base_chain = (
         f'scale=1280:720:force_original_aspect_ratio=decrease:in_range=full:out_range=tv,'
         f'pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps={FPS},setsar=1'
     )
-    filter_graph = build_filter_graph(base_chain, include_label=True)
+    use_wm = WATERMARK_ENABLED and os.path.exists(WATERMARK_PATH)
+    audio_input_index = 2 if use_wm else 1
+
+    inputs = [f'-i "{rtsp}"']
+    if use_wm:
+        inputs.append(f'-loop 1 -i "{WATERMARK_PATH}"')
+    inputs.append('-f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100')
+
+    wm_input_index = 1 if use_wm else None
+    filter_graph = build_filter_graph(
+        base_chain,
+        include_label=True,
+        include_watermark=use_wm,
+        wm_input_index=wm_input_index,
+    )
     return (
         'ffmpeg '
         '-hide_banner -loglevel error -strict -1 '
@@ -315,8 +352,7 @@ def cmd_from_rtsp(rtsp):
         '-rtsp_transport tcp -rtsp_flags prefer_tcp '
         '-thread_queue_size 1024 -probesize 1M -analyzeduration 20M '
         '-rtbufsize 512M '
-        f'-i "{rtsp}" '
-        '-f lavfi -i anullsrc=channel_layout=stereo:sample_rate=44100 '
+        + " ".join(inputs) + ' '
         f'-filter_complex "{filter_graph}" '
         f'-fps_mode cfr -r {FPS} '
         '-c:v libx264 -preset veryfast -profile:v high -tune zerolatency '
@@ -325,7 +361,7 @@ def cmd_from_rtsp(rtsp):
         f'-b:v {VBPS} -maxrate {MAXRATE} -bufsize {BUFSIZE} '
         '-c:a aac -b:a 128k -ar 44100 -ac 2 '
         '-colorspace bt709 -color_primaries bt709 -color_trc bt709 '
-        '-map "[vout]" -map 1:a:0 '
+        f'-map "[vout]" -map {audio_input_index}:a:0 '
         '-flush_packets 1 -muxpreload 0 -muxdelay 0 '
         '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 '
         + out_mux()
@@ -336,7 +372,7 @@ def cmd_from_fallback():
         f'scale=1280:720:force_original_aspect_ratio=increase:in_range=full:out_range=tv,'
         f'crop=1280:720,fps={FPS},setsar=1'
     )
-    filter_graph = build_filter_graph(base_chain, include_label=False)
+    filter_graph = build_filter_graph(base_chain, include_label=False, include_watermark=False)
     return (
         'ffmpeg '
         '-hide_banner -loglevel error -strict -1 '
