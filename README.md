@@ -32,12 +32,33 @@ RTSP_PASS  = "kamerans-lösenord"
 YT_KEY     = "din-youtube-streamnyckel"
 TARGET_MAC = "xx:xx:xx:xx:xx:xx"   # kamerans MAC-adress
 YT_CHANNEL_ID = "Din YouTube-kanal-ID"
+
+# Overlay-text (kameraläge)
+LABEL_TEXT = "gordalen.nu"
+LABEL_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+LABEL_FONT_SIZE = 30
+LABEL_TEXT_COLOR = "0x0F2C5C"
+LABEL_OFFSET = 5           # px från överkant/vänster
+LABEL_PADDING = 4          # box-padding
+LABEL_BG_ALPHA = 0.6
+
+# Watermark (kameraläge)
+WATERMARK_ENABLED = True
+WATERMARK_PATH = "/opt/webcam-2.0/gordalen_nu_logo.png"
+WATERMARK_MAX_SIZE = 300   # max bredd/höjd i px
+WATERMARK_MARGIN = 14      # px från höger/underkant
 ```
 
 Placera en fallback-video här (spelas upp om kameran inte är tillgänglig):
 
 ```
 /opt/webcam-2.0/fallback.mp4
+
+Placera vattenmärkesbilden här (används endast i kameraläge, ej i fallback):
+
+```
+/opt/webcam-2.0/gordalen_nu_logo.png
+```
 ```
 
 ### 4. Gör filen körbar
@@ -150,6 +171,9 @@ Lägg in följande iframe i din HTML:
 - Automatisk upptäckt av kamera via MAC-adress  
 - RTSP till YouTube Live (RTMPS)  
 - Automatisk fallback-video vid bortkoppling  
+- Overlay-text (kameraläge) med bakgrundsruta  
+- Vattenmärke (kameraläge) med justerbar storlek/marginal  
+- Fallback-ström visas utan overlay/vattenmärke  
 - Optimerad för LTE och instabila nätverk  
 - Körs som systemd-tjänst med watchdog-stöd  
 - Självläkande: återstartar automatiskt efter fel  
