@@ -1,14 +1,44 @@
 # Webcam 2.0
 **Self-healing YouTube livestream supervisor for RTSP-capable cameras**
 
-Webcam 2.0 är ett Python-baserat system som automatiskt streamar från RTSP-kameror till YouTube Live (RTMPS).  
+Webcam 2.0 är ett Python-baserat system som automatiskt streamar från RTSP-kameror till YouTube Live (RTMPS).
 Om kameran tappar kontakt eller nätverket går ner, växlar systemet automatiskt till en lokal fallback-video och återgår till kameran när den är tillgänglig igen.
 
 Projektet fungerar med alla RTSP-kompatibla IP-kameror, inklusive TP-Link Tapo, Reolink, Hikvision, Dahua och liknande.
 
 ---
 
-## Installation
+
+## Aktuell driftversion – uppdaterad 2026-10-08
+
+Ändringarna från 2026-10-07 finns på kameraservern i `/opt/webcam-2.0`. Koden i detta repos `webcam-supervisor.py` är fortfarande den äldre versionen. Installationsanvisningarna längre ned gäller den versionen; en kloning av repot installerar inte den nya serverversionen eller Joomla-pluginet.
+
+### Stabilare kamera- och YouTube-övervakning
+
+Servern kör `webcam_onvif_supervisor.py`, som läser `webcam-supervisor.conf` bredvid skriptet. Miljövariabeln `WEBCAM_SUPERVISOR_CONF` kan ange en annan sökväg. `config.txt` är en äldre konfigurationsfil och används inte som standard av den här versionen.
+
+- Schemalagda kameraomstarter är avstängda med `proactive_camera_restart_every=0`.
+- YouTube HLS-uppslag använder 10 sekunders socket-timeout, en retry och högst 25 sekunder för subprocessen.
+- Ett misslyckat HLS-uppslag bedöms som okänd tittarhälsa. Vid tröskeln för upprepade fel nollställs stall-räknarna, medan kamera- och ffmpeg-övervakningen fortsätter. Enbart otillgänglig HLS utlöser inte kameraomstart eller fallback.
+- Bekräftade HLS-stopp och faktiska kamera-/ffmpeg-fel behåller sin återställningshantering.
+
+### Joomla/YOOtheme och YouTube Live
+
+På servern finns `gordalen-live-v2/` med Gordalen Live Player 2.0.0. Pluginet installeras via Joomlas vanliga installationsfunktion. Det använder YOOthemes vanliga Video-element med kanalens permanenta YouTube-adress och behåller elementets layoutinställningar. Inga Joomla- eller YOOtheme-kärnfiler ändras.
+
+`publish_youtube_live.py` körs ungefär varje minut via systemd-timer. Det säkerställer sändningen och publicerar aktuellt video-ID över HTTPS till Joomlas `com_ajax`-endpoint. POST kräver publisher-nyckeln. API- eller nätverksfel behåller senast publicerad status; ett uttryckligt resultat utan livesändning publicerar null. Spelaren upptäcker ersättningssändningar och återgår till livekanten.
+
+Nya sändningar skapas med `enableDvr=false`. YouTube tillåter inte avstängd inspelning för den här kanalen. Sändningshanteraren raderar därför avslutade sändningar där både webbkamerans exakta titel och bundna stream-ID matchar. Andra videor lämnas kvar. Radering kan fördröjas vid API-fel.
+
+Vid PHP-deploy på den aktuella webbservern (`opcache.validate_timestamps=0`) behöver ändrade pluginfiler invalideras i FPM:s OPcache, eller FPM laddas om. Enbart rensning av Joomla-cache räcker inte. Serverns fullständiga integrationsdokumentation finns i `gordalen-live-v2/README.md`.
+
+### Konfiguration och GitHub
+
+`.gitignore` utesluter `config.txt`, `webcam-supervisor.conf`, `publisher.json`, `.env`, YouTube OAuth-filer och deras säkerhetskopior, även i undermappar. Verkliga nycklar och lösenord ska finnas lokalt på servern. Konfigurationsfilerna var inte spårade på `main` när repot kontrollerades 2026-10-08.
+
+Kontrollera en fil med `git check-ignore -v -- <sökväg>` och `git ls-files -- <sökväg>`. Om den redan är spårad i ett annat checkout: kör `git rm --cached -- <sökväg>` och committa ändringen. Den lokala filen behålls. Ignorering tar inte bort tidigare innehåll ur Git-historiken.
+
+## Installation av den äldre GitHub-versionen
 
 ### 1. Installera beroenden
 ```bash
@@ -24,7 +54,7 @@ cd webcam-2.0
 ```
 
 ### 3. Konfigurera
-Redigera `webcam-supervisor.py` och uppdatera följande värden:
+GitHub-versionen nedan använder inställningar direkt i Python-filen. Lägg aldrig riktiga lösenord eller streamnycklar i en fil som ska checkas in. Den aktuella serverversionen använder i stället en separat lokal konfigurationsfil; se avsnittet om driftversionen nedan. Följande visar inställningarna för den äldre versionen:
 
 ```python
 RTSP_USER  = "kamerans-användare"
@@ -53,12 +83,12 @@ Placera en fallback-video här (spelas upp om kameran inte är tillgänglig):
 
 ```
 /opt/webcam-2.0/fallback.mp4
+```
 
 Placera vattenmärkesbilden här (används endast i kameraläge, ej i fallback):
 
 ```
 /opt/webcam-2.0/gordalen_nu_logo.png
-```
 ```
 
 ### 4. Gör filen körbar
@@ -92,8 +122,6 @@ Systemd används för att köra Webcam 2.0 som en bakgrundsprocess som startar a
    Restart=always
    RestartSec=5
    User=root
-   # Aktivera watchdog för extra robusthet:
-   WatchdogSec=30
    StartLimitIntervalSec=120
    StartLimitBurst=5
    TimeoutStopSec=5
@@ -146,7 +174,7 @@ För ännu högre tillförlitlighet kan du låta **systemd’s egen watchdog** a
    systemctl show | grep Watchdog
    ```
 
-Systemd kommer nu automatiskt att övervaka att tjänsten svarar — om Python-processen fryser eller inte rapporterar livstecken inom 30 sekunder, startas den om. Om hela systemet låser sig, triggas en hård reboot via kernel-watchdog.
+RuntimeWatchdogSec gäller datorns hårdvaruwatchdog och kräver stöd från systemet. Tjänstens Restart=always startar om processen när den avslutas. WatchdogSec för själva Python-tjänsten ska bara aktiveras om programmet skickar systemd-watchdogsignaler; exemplet ovan aktiverar därför inte den funktionen.
 
 ---
 
@@ -168,15 +196,15 @@ Lägg in följande iframe i din HTML:
 
 ## Funktioner
 
-- Automatisk upptäckt av kamera via MAC-adress  
-- RTSP till YouTube Live (RTMPS)  
-- Automatisk fallback-video vid bortkoppling  
-- Overlay-text (kameraläge) med bakgrundsruta  
-- Vattenmärke (kameraläge) med justerbar storlek/marginal  
-- Fallback-ström visas utan overlay/vattenmärke  
-- Optimerad för LTE och instabila nätverk  
-- Körs som systemd-tjänst med watchdog-stöd  
-- Självläkande: återstartar automatiskt efter fel  
+- Automatisk upptäckt av kamera via MAC-adress
+- RTSP till YouTube Live (RTMPS)
+- Automatisk fallback-video vid bortkoppling
+- Overlay-text (kameraläge) med bakgrundsruta
+- Vattenmärke (kameraläge) med justerbar storlek/marginal
+- Fallback-ström visas utan overlay/vattenmärke
+- Optimerad för LTE och instabila nätverk
+- Körs som systemd-tjänst med automatisk processåterstart
+- Självläkande: återstartar automatiskt efter fel
 
 ---
 
@@ -218,5 +246,5 @@ Lägg in följande iframe i din HTML:
 ---
 
 ## Licens
-MIT License © 2025 Webcam 2.0 Project  
+MIT License © 2025 Webcam 2.0 Project
 Fri att använda, modifiera och distribuera – behåll attribution.

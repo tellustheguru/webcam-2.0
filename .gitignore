@@ -1,0 +1,17 @@
+# Local configuration and credentials (including backup copies)
+config.txt
+config.txt.*
+webcam-supervisor.conf
+webcam-supervisor.conf.*
+publisher.json
+publisher.json.*
+.env
+.env.*
+!.env.example
+youtube-oauth-*.json
+youtube-oauth-*.json.*
+
+# Local runtime files
+venv/
+__pycache__/
+*.py[cod]
