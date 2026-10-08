@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<extension type="plugin" group="system" method="upgrade">
+ <name>Gordalen Live Player</name><author>Gordalen</author>
+ <creationDate>2026-10</creationDate><version>2.0.0</version>
+ <license>GNU General Public License version 2 or later</license>
+ <description>Automatic live broadcast resolution for the native YOOtheme video element. Configuration and uninstall are managed by Joomla.</description>
+ <namespace path="src">Gordalen\Plugin\System\Gordalenlive</namespace>
+ <files><folder plugin="gordalenlive">services</folder><folder>src</folder><folder>yootheme</folder><filename>script.php</filename></files>
+ <media destination="plg_system_gordalenlive" folder="media"><folder>js</folder></media>
+ <scriptfile>script.php</scriptfile>
+ <config><fields name="params"><fieldset name="basic" label="Live player">
+  <field name="channel_id" type="text" label="YouTube channel ID" required="true" filter="string" />
+  <field name="publish_key" type="password" label="Publisher key" description="Shared secret used by the camera server. Never exposed in player HTML." filter="raw" />
+  <field name="status_file" type="text" label="Status file" description="Optional absolute path. Empty uses the extension's managed media directory." filter="string" />
+  <field name="poll_seconds" type="number" label="Player refresh interval (seconds)" default="30" min="15" max="300" />
+  <field name="max_lag_seconds" type="number" label="Maximum playback lag (seconds)" default="30" min="10" max="120" />
+ </fieldset></fields></config>
+ <targetplatform name="joomla" version="(5|6)\." />
+</extension>
